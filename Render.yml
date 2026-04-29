@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: geowatch-server
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: NODE_ENV
+        value: production
