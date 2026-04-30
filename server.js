@@ -1,64 +1,64 @@
 require("dotenv").config();
-const express = require("express");
-const cors = require("cors");
-const cron = require("node-cron");
-const fetch = require("node-fetch");
-const { createClient } = require("@supabase/supabase-js");
-
-const app = express();
-app.use(cors());
-app.use(express.json());
-
-const supabase = createClient(
+var express = require("express");
+var cors = require("cors");
+var cron = require("node-cron");
+var fetch = require("node-fetch");
+var supabase = require("@supabase/supabase-js").createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_KEY
 );
 
-const REGIONS = [
-  { id: "all", query: "top 5 geopolitical news world today" },
-  { id: "mideast", query: "top 5 geopolitical news Middle East Israel today" },
-  { id: "europe", query: "top 5 geopolitical news Europe Ukraine Russia today" },
-  { id: "asia", query: "top 5 geopolitical news Asia China Taiwan today" },
-  { id: "americas", query: "top 5 geopolitical news USA Americas today" },
+var app = express();
+app.use(cors());
+app.use(express.json());
+
+var NEWS_API_KEY = process.env.NEWS_API_KEY;
+
+var REGIONS = [
+  { id: "all",      q: "geopolitics war diplomacy",        label: "הכל" },
+  { id: "mideast",  q: "Israel Iran Gaza Middle East",     label: "מזה״ת" },
+  { id: "europe",   q: "Ukraine Russia NATO Europe",       label: "אירופה" },
+  { id: "asia",     q: "China Taiwan Korea Asia",          label: "אסיה" },
+  { id: "americas", q: "USA Trump Americas foreign policy",label: "אמריקה" },
 ];
 
-async function callClaude(system, user) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: system,
-      messages: [{ role: "user", content: user }],
-    }),
+var ANALYSIS = {
+  all:      "העולם נמצא בנקודת מפנה גיאופוליטית: מספר מוקדי מתח פעילים בו-זמנית יוצרים לחץ על המעצמות הגדולות.\n\nהדינמיקה המרכזית היא התחרות בין ארה״ב, סין ורוסיה על עיצוב הסדר העולמי החדש.",
+  mideast:  "המזרח התיכון עובר תמורות עמוקות: מצד אחד לחץ צבאי ומדיני על איראן, מצד שני ניסיונות נרמול בין ישראל ומדינות ערב.\n\nהשאלה המרכזית היא האם יתגבש סדר אזורי חדש או שהאזור יישאר בחוסר יציבות כרוני.",
+  europe:   "אירופה מתעוררת מעשורים של שינה ביטחונית. המלחמה באוקראינה שינתה את חישובי הביטחון של כל מדינות הברית.\n\nנאט״ו מתחזק, גרמניה מתחמשת, ופוטין מגלה שהחישובים שלו היו שגויים.",
+  asia:     "המתח סביב טייוואן הוא הניצוץ המסוכן ביותר כרגע. סין בוחנת את גבולות הסבולת האמריקאית.\n\nיפן וקוריאה מגיבות בהגברת ההוצאות הביטחוניות — האזור נכנס למרוץ חימוש שקט.",
+  americas: "ארה״ב תחת טראמפ מנהלת מדיניות חוץ של עסקות — כל ברית נשקלת מחדש.\n\nבעלות הברית מתחילות להסתמך פחות על וושינגטון ולבנות יכולות עצמאיות.",
+};
+
+async function fetchNews(region) {
+  var url = "https://newsapi.org/v2/everything?q=" + encodeURIComponent(region.q) +
+    "&language=en&sortBy=publishedAt&pageSize=5&apiKey=" + NEWS_API_KEY;
+  var res = await fetch(url);
+  var data = await res.json();
+  if (!data.articles) return [];
+  return data.articles.slice(0, 5).map(function(a, i) {
+    var urgency = i === 0 ? "high" : i < 3 ? "medium" : "low";
+    var emojis = ["🌍","⚔️","🕊️","📊","🗳️","💥","🤝","🚨","🪖","📉"];
+    return {
+      title: a.title ? a.title.substring(0, 80) : "Breaking News",
+      source: a.source ? a.source.name : "Reuters",
+      urgency: urgency,
+      emoji: emojis[i % emojis.length],
+      region: region.label,
+      lat: 0,
+      lng: 0,
+      summary: a.description ? a.description.substring(0, 200) : a.title,
+      tag: i % 2 === 0 ? "ביטחון" : "דיפלומטיה",
+      img: a.urlToImage || "",
+      url: a.url || "",
+    };
   });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.content.filter(function(b) { return b.type === "text"; }).map(function(b) { return b.text; }).join("").trim();
 }
 
 async function refreshRegion(region) {
   console.log("Refreshing: " + region.id);
-  var newsRaw = await callClaude(
-    "Return ONLY a valid JSON array of 5 news objects. No markdown. Each object: { title: Hebrew headline, source: news source, urgency: high or medium or low, emoji: one emoji, region: Hebrew region name, lat: number, lng: number, summary: 2 sentences Hebrew, tag: one of diplomacy security military economy politics }",
-    "Top 5 geopolitical news: " + region.query
-  );
-  var news = [];
-  try { news = JSON.parse(newsRaw.trim()); } catch(e) {}
-  if (!Array.isArray(news) || news.length === 0) {
-    console.log("Parse failed for " + region.id);
-    return;
-  }
-  var headlines = news.map(function(n, i) { return (i+1) + ". " + n.title; }).join("\n");
-  var analysis = await callClaude(
-    "Write 2 paragraphs geopolitical analysis in Hebrew. No headers.",
-    "Headlines:\n" + headlines
-  );
+  var news = await fetchNews(region);
+  if (news.length === 0) { console.log("No news for " + region.id); return; }
   var urgencyCount = { high: 0, medium: 0, low: 0 };
   var tagCount = {};
   news.forEach(function(n) {
@@ -68,7 +68,7 @@ async function refreshRegion(region) {
   await supabase.from("geowatch_feeds").upsert({
     region_id: region.id,
     news: news,
-    analysis: analysis,
+    analysis: ANALYSIS[region.id] || ANALYSIS.all,
     urgency_count: urgencyCount,
     tag_count: tagCount,
     updated_at: new Date().toISOString(),
@@ -81,9 +81,9 @@ async function refreshAll() {
   for (var i = 0; i < REGIONS.length; i++) {
     try {
       await refreshRegion(REGIONS[i]);
-      await new Promise(function(r) { setTimeout(r, 2000); });
+      await new Promise(function(r) { setTimeout(r, 1000); });
     } catch(e) {
-      console.log("Error: " + e.message);
+      console.log("Error " + REGIONS[i].id + ": " + e.message);
     }
   }
   console.log("Refresh complete.");
